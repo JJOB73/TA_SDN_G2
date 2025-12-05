@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard SDN - Monitoreo de Red</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 28px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4CAF50;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.disconnected {
+            background: #f44336;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .stat-card .value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .section {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 22px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .switch-card, .host-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .switch-card h3, .host-card h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .switch-info, .host-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .info-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-size: 16px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .refresh-btn:hover {
+            background: #5568d3;
+        }
+
+        .refresh-btn.active {
+            background: #4CAF50;
+        }
+
+        .refresh-btn.active:hover {
+            background: #45a049;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+
+        .timestamp {
+            font-size: 12px;
+            color: #999;
+            margin-top: 10px;
+        }
+
+        .view-flows-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 10px;
+            transition: background 0.3s;
+        }
+
+        .view-flows-btn:hover {
+            background: #45a049;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            overflow: auto;
+        }
+
+        .modal-content {
+            background-color: white;
+            margin: 5% auto;
+            padding: 30px;
+            border-radius: 10px;
+            width: 80%;
+            max-width: 900px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 15px;
+        }
+
+        .modal-header h2 {
+            color: #333;
+            margin: 0;
+        }
+
+        .close-btn {
+            background: #f44336;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .close-btn:hover {
+            background: #da190b;
+        }
+
+        .flow-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .flow-item h4 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .flow-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .flow-match {
+            background: #e3f2fd;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .loading-flows {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌐 Dashboard SDN - Monitoreo de Red</h1>
+            <div class="status-indicator">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Conectado</span>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <h3>Switches</h3>
+                <div class="value" id="switchesCount">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Hosts</h3>
+                <div class="value" id="hostsCount">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Flujos Totales</h3>
+                <div class="value" id="flowsCount">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Estado</h3>
+                <div class="value" style="font-size: 20px;" id="connectionStatus">Verificando...</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>Switches Conectados</h2>
+                <div style="display: flex; gap: 10px;">
+                    <button class="refresh-btn" style="background: #f44336;" onclick="clearAllStaticFlows()">🗑️ Borrar Flujos Estáticos</button>
+                    <button class="refresh-btn" onclick="loadData()">🔄 Actualizar</button>
+                </div>
+            </div>
+            <div id="switchesContainer">
+                <div class="loading">Cargando switches...</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2>Hosts Conectados</h2>
+                <div style="display: flex; gap: 10px;">
+                    <button class="refresh-btn" id="filterHostsBtn" onclick="toggleHostFilter()">🔍 Solo con IP</button>
+                    <button class="refresh-btn" onclick="loadData()">🔄 Actualizar</button>
+                </div>
+            </div>
+            <div id="hostsContainer">
+                <div class="loading">Cargando hosts...</div>
+            </div>
+        </div>
+
+        <div class="timestamp" id="lastUpdate">
+            Última actualización: Nunca
+        </div>
+    </div>
+
+    <!-- Modal para mostrar flujos -->
+    <div id="flowsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Flujos del Switch</h2>
+                <button class="close-btn" onclick="closeFlowsModal()">✕ Cerrar</button>
+            </div>
+            <div id="flowsContent">
+                <div class="loading-flows">Cargando flujos...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval;
+
+        function updateStatus(data) {
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            const connectionStatus = document.getElementById('connectionStatus');
+
+            if (data.success && data.controller_connected) {
+                statusDot.classList.remove('disconnected');
+                statusText.textContent = 'Conectado';
+                connectionStatus.textContent = '🟢 Activo';
+            } else {
+                statusDot.classList.add('disconnected');
+                statusText.textContent = 'Desconectado';
+                connectionStatus.textContent = '🔴 Inactivo';
+            }
+        }
+
+        function loadSwitches() {
+            fetch('/api/switches')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('switchesCount').textContent = data.count;
+                        const container = document.getElementById('switchesContainer');
+                        
+                        if (data.switches.length === 0) {
+                            container.innerHTML = '<div class="error">No hay switches conectados</div>';
+                            return;
+                        }
+
+                        container.innerHTML = data.switches.map(switch_ => `
+                            <div class="switch-card">
+                                <h3>${switch_.name}</h3>
+                                <div class="switch-info">
+                                    <div class="info-item">
+                                        <span class="info-label">DPID</span>
+                                        <span class="info-value">${switch_.dpid}</span>
+                                    </div>
+                                    <div class="info-item">
+                                        <span class="info-label">IP</span>
+                                        <span class="info-value">${switch_.ip}</span>
+                                    </div>
+                                    <div class="info-item">
+                                        <span class="info-label">Puertos Totales</span>
+                                        <span class="info-value">${switch_.total_ports}</span>
+                                    </div>
+                                    <div class="info-item">
+                                        <span class="info-label">Puertos Activos</span>
+                                        <span class="info-value">${switch_.active_ports}</span>
+                                    </div>
+                                </div>
+                                <button class="view-flows-btn" onclick="showFlows('${switch_.dpid}', '${switch_.name}')">
+                                    📋 Ver Flujos
+                                </button>
+                            </div>
+                        `).join('');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading switches:', error);
+                    document.getElementById('switchesContainer').innerHTML = 
+                        '<div class="error">Error al cargar switches: ' + error.message + '</div>';
+                });
+        }
+
+        let showOnlyWithIP = false;
+        let allHosts = [];
+
+        function toggleHostFilter() {
+            showOnlyWithIP = !showOnlyWithIP;
+            const filterBtn = document.getElementById('filterHostsBtn');
+            
+            if (showOnlyWithIP) {
+                filterBtn.textContent = '🔍 Mostrar Todos';
+                filterBtn.classList.add('active');
+            } else {
+                filterBtn.textContent = '🔍 Solo con IP';
+                filterBtn.classList.remove('active');
+            }
+            
+            renderHosts();
+        }
+
+        function renderHosts() {
+            const container = document.getElementById('hostsContainer');
+            
+            // Filtrar hosts según el estado del botón
+            let hostsToShow = showOnlyWithIP 
+                ? allHosts.filter(host => host.ips && host.ips.length > 0)
+                : allHosts;
+            
+            // Actualizar contador
+            document.getElementById('hostsCount').textContent = allHosts.length;
+            if (showOnlyWithIP) {
+                document.getElementById('hostsCount').textContent += ` (${hostsToShow.length} con IP)`;
+            }
+            
+            if (hostsToShow.length === 0) {
+                const message = showOnlyWithIP 
+                    ? 'No hay hosts con IP asignada'
+                    : 'No hay hosts conectados';
+                container.innerHTML = `<div class="error">${message}</div>`;
+                return;
+            }
+
+            container.innerHTML = hostsToShow.map(host => `
+                <div class="host-card">
+                    <h3>Host ${host.mac}</h3>
+                    <div class="host-info">
+                        <div class="info-item">
+                            <span class="info-label">MAC Address</span>
+                            <span class="info-value">${host.mac}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">IP Addresses</span>
+                            <span class="info-value">${host.ips.length > 0 ? host.ips.join(', ') : 'No asignada'}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Switch</span>
+                            <span class="info-value">${host.switch_name || 'Desconocido'}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Switch (DPID)</span>
+                            <span class="info-value">${host.switch_dpid}</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Puerto</span>
+                            <span class="info-value">${host.port}</span>
+                        </div>
+                    </div>
+                    ${host.is_sw3 && host.has_ip ? `
+                        <button class="view-flows-btn" style="background: #ff9800;" 
+                                onclick="createHostFlows('${host.ips[0]}', '${host.port}', '${host.mac}')">
+                            🔓 Crear Flujos Portal Cautivo
+                        </button>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        function loadHosts() {
+            fetch('/api/hosts')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        allHosts = data.hosts;
+                        renderHosts();
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading hosts:', error);
+                    document.getElementById('hostsContainer').innerHTML = 
+                        '<div class="error">Error al cargar hosts: ' + error.message + '</div>';
+                });
+        }
+
+        function loadFlows() {
+            fetch('/api/flows')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('flowsCount').textContent = data.total_flows;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading flows:', error);
+                });
+        }
+
+        function loadStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    updateStatus(data);
+                })
+                .catch(error => {
+                    console.error('Error loading status:', error);
+                    updateStatus({success: false, controller_connected: false});
+                });
+        }
+
+        function loadData() {
+            loadStatus();
+            loadSwitches();
+            loadHosts();
+            loadFlows();
+            
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = 
+                'Última actualización: ' + now.toLocaleTimeString();
+        }
+
+        // Cargar datos al inicio
+        loadData();
+
+        // Auto-refresh cada 5 segundos
+        autoRefreshInterval = setInterval(loadData, 5000);
+
+        // Limpiar intervalo al cerrar la página
+        window.addEventListener('beforeunload', () => {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+        });
+
+        // Funciones para mostrar flujos
+        function showFlows(switchDpid, switchName) {
+            const modal = document.getElementById('flowsModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const flowsContent = document.getElementById('flowsContent');
+            
+            modalTitle.textContent = `Flujos de ${switchName}`;
+            modal.style.display = 'block';
+            flowsContent.innerHTML = '<div class="loading-flows">Cargando flujos...</div>';
+            
+            fetch(`/api/flows/${encodeURIComponent(switchDpid)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (data.flows.length === 0) {
+                            flowsContent.innerHTML = '<div class="error">No hay flujos configurados en este switch</div>';
+                            return;
+                        }
+                        
+                        flowsContent.innerHTML = `
+                            <div style="margin-bottom: 15px; color: #666;">
+                                <strong>Total de flujos:</strong> ${data.count}
+                            </div>
+                            ${data.flows.map(flow => `
+                                <div class="flow-item">
+                                    <h4>${flow.name || 'Flujo sin nombre'}</h4>
+                                    <div class="flow-details">
+                                        <div class="info-item">
+                                            <span class="info-label">Prioridad</span>
+                                            <span class="info-value">${flow.priority}</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">Tabla</span>
+                                            <span class="info-value">${flow.table}</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">Cookie</span>
+                                            <span class="info-value">${flow.cookie}</span>
+                                        </div>
+                                        <div class="info-item">
+                                            <span class="info-label">Estado</span>
+                                            <span class="info-value">${flow.active === 'true' ? '🟢 Activo' : '🔴 Inactivo'}</span>
+                                        </div>
+                                    </div>
+                                    <div class="flow-match">
+                                        <strong>Match:</strong> ${formatMatchFields(flow.match)}<br>
+                                        <strong>Actions:</strong> ${flow.actions || 'N/A'}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        `;
+                    } else {
+                        flowsContent.innerHTML = `<div class="error">Error al cargar flujos: ${data.error || 'Error desconocido'}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading flows:', error);
+                    flowsContent.innerHTML = `<div class="error">Error al cargar flujos: ${error.message}</div>`;
+                });
+        }
+
+        function formatMatchFields(match) {
+            if (!match || typeof match !== 'object') {
+                return 'N/A';
+            }
+            
+            const fields = [];
+            for (const [key, value] of Object.entries(match)) {
+                if (value !== undefined && value !== null && value !== '') {
+                    fields.push(`${key}=${value}`);
+                }
+            }
+            
+            return fields.length > 0 ? fields.join(', ') : 'Ninguno';
+        }
+
+        function closeFlowsModal() {
+            document.getElementById('flowsModal').style.display = 'none';
+        }
+
+        // Cerrar modal al hacer clic fuera de él
+        window.onclick = function(event) {
+            const modal = document.getElementById('flowsModal');
+            if (event.target === modal) {
+                closeFlowsModal();
+            }
+        }
+
+        // Función para borrar todos los flujos estáticos
+        function clearAllStaticFlows() {
+            if (!confirm('¿Estás seguro de que quieres borrar TODOS los flujos estáticos (creados por API REST) de TODOS los switches?\n\nEsta acción no se puede deshacer.')) {
+                return;
+            }
+
+            const button = event.target;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '⏳ Borrando flujos...';
+
+            fetch('/api/clear_all_static_flows', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`✓ ${data.message}\n\nSwitches procesados: ${data.total_switches}\nExitosos: ${data.total_success}\nFallidos: ${data.total_failed}`);
+                    button.textContent = '✓ Flujos Borrados';
+                    button.style.background = '#4CAF50';
+                    // Recargar datos después de 2 segundos
+                    setTimeout(() => {
+                        loadData();
+                        button.disabled = false;
+                        button.textContent = originalText;
+                        button.style.background = '#f44336';
+                    }, 2000);
+                } else {
+                    alert('✗ Error al borrar flujos: ' + (data.error || 'Error desconocido'));
+                    button.disabled = false;
+                    button.textContent = originalText;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('✗ Error al borrar flujos: ' + error.message);
+                button.disabled = false;
+                button.textContent = originalText;
+            });
+        }
+
+        // Función para crear flujos de portal cautivo
+        function createHostFlows(hostIp, hostPort, hostMac) {
+            if (!confirm(`¿Crear flujos de portal cautivo para el host?\nIP: ${hostIp}\nPuerto: ${hostPort}\nMAC: ${hostMac}`)) {
+                return;
+            }
+
+            const button = event.target;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '⏳ Creando flujos...';
+
+            fetch('/api/create_host_flows', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    host_ip: hostIp,
+                    host_port: hostPort
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('✓ Flujos creados correctamente para el host ' + hostIp);
+                    button.textContent = '✓ Flujos Creados';
+                    button.style.background = '#4CAF50';
+                    // Recargar datos después de 2 segundos
+                    setTimeout(() => {
+                        loadData();
+                        button.disabled = false;
+                        button.textContent = originalText;
+                        button.style.background = '#ff9800';
+                    }, 2000);
+                } else {
+                    alert('✗ Error al crear flujos: ' + (data.error || 'Error desconocido'));
+                    button.disabled = false;
+                    button.textContent = originalText;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('✗ Error al crear flujos: ' + error.message);
+                button.disabled = false;
+                button.textContent = originalText;
+            });
+        }
+    </script>
+</body>
+</html>
+
