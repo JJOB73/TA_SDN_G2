@@ -9,6 +9,7 @@ import org.restlet.resource.Post;
 import org.restlet.representation.Representation;
 import org.restlet.routing.Router;
 import org.restlet.Context;
+import org.restlet.Restlet;
 
 import net.floodlightcontroller.core.module.*;
 import net.floodlightcontroller.restserver.IRestApiService;
@@ -22,37 +23,40 @@ public class PacketInRestAPI implements IFloodlightModule, RestletRoutable {
     protected static Logger log = LoggerFactory.getLogger(PacketInRestAPI.class);
     protected IRestApiService restApi;
 
-    private ConcurrentHashMap<String, PacketInStats> globalStats;
-    private ConcurrentHashMap<String, SwitchStats> switchStats;
-    private ConcurrentHashMap<String, AnomalyAlert> anomalyAlerts;
-    private long startTime;
+    // Variable estática para acceso desde recursos estáticos
+    protected static PacketInRestAPI instance;
+
+    protected ConcurrentHashMap<String, PacketInStats> globalStats;
+    protected ConcurrentHashMap<String, SwitchStats> switchStats;
+    protected ConcurrentHashMap<String, AnomalyAlert> anomalyAlerts;
+    protected long startTime;
 
     @Override
     public void init(FloodlightModuleContext context) throws FloodlightModuleException {
         log.info("[PACKETIN-API] Initializing");
 
-        try {
-            restApi = context.getServiceImpl(IRestApiService.class);
-        } catch (Exception e) {
-            log.error("[PACKETIN-API] Error: {}", e.getMessage());
-            throw new FloodlightModuleException(e);
-        }
+        restApi = context.getServiceImpl(IRestApiService.class);
 
         globalStats = new ConcurrentHashMap<String, PacketInStats>();
         switchStats = new ConcurrentHashMap<String, SwitchStats>();
         anomalyAlerts = new ConcurrentHashMap<String, AnomalyAlert>();
         startTime = System.currentTimeMillis();
+        
+        // Guardar instancia para acceso estático
+        instance = this;
     }
 
     @Override
     public void startUp(FloodlightModuleContext context) {
         log.info("[PACKETIN-API] Starting");
+
         restApi.addRestletRoutable(this);
+
         log.info("[PACKETIN-API] Started - REST endpoints active");
     }
 
     @Override
-    public org.restlet.Restlet getRestlet(Context context) {
+    public Restlet getRestlet(Context context) {
         Router router = new Router(context);
 
         router.attach("/stats", PacketInStatsResource.class);
@@ -71,7 +75,7 @@ public class PacketInRestAPI implements IFloodlightModule, RestletRoutable {
         return "/wm/packetin";
     }
 
-    private String esc(String s) {
+    protected String esc(String s) {
         if (s == null) return "";
         return s.replace("\\", "\\\\")
                 .replace("\"", "\\\"")
@@ -79,199 +83,209 @@ public class PacketInRestAPI implements IFloodlightModule, RestletRoutable {
                 .replace("\r", "\\r");
     }
 
+
+    /* ============================================================
+     *   REST RESOURCES (all must be static)
+     * ============================================================ */
+
     // ===== RESOURCE 1: GET /wm/packetin/stats =====
-    public class PacketInStatsResource extends ServerResource {
+    public static class PacketInStatsResource extends ServerResource {
         @Get("json")
         public String retrieve() {
             try {
-                long uptime = System.currentTimeMillis() - startTime;
+                PacketInRestAPI module = instance;
+
+                long uptime = System.currentTimeMillis() - module.startTime;
+
                 StringBuilder r = new StringBuilder();
                 r.append("{\"status\":\"active\",");
-                r.append("\"uptime_seconds\":").append(uptime/1000).append(",");
+                r.append("\"uptime_seconds\":").append(uptime / 1000).append(",");
                 r.append("\"timestamp\":").append(System.currentTimeMillis()).append(",");
 
-                // Protocolos
+                // Protocols
                 r.append("\"protocols\":{");
-                PacketInStats tcp = globalStats.get("TCP");
-                PacketInStats udp = globalStats.get("UDP");
-                PacketInStats arp = globalStats.get("ARP");
+                PacketInStats tcp = module.globalStats.get("TCP");
+                PacketInStats udp = module.globalStats.get("UDP");
+                PacketInStats arp = module.globalStats.get("ARP");
                 r.append("\"TCP\":").append(tcp != null ? tcp.count : 0).append(",");
                 r.append("\"UDP\":").append(udp != null ? udp.count : 0).append(",");
                 r.append("\"ARP\":").append(arp != null ? arp.count : 0);
                 r.append("},");
 
-                // Total paquetes
                 long total = 0;
-                for (PacketInStats s : globalStats.values()) {
+                for (PacketInStats s : module.globalStats.values()) {
                     total += s.count;
                 }
-                r.append("\"total_packets\":").append(total).append(",");
 
-                // Switches
+                // Switch stats
                 r.append("\"switches\":[");
-                int c = 0;
-                for (Map.Entry<String, SwitchStats> e : switchStats.entrySet()) {
-                    if (c++ > 0) r.append(",");
-                    r.append("{");
-                    r.append("\"dpid\":\"").append(esc(e.getKey())).append("\",");
-                    r.append("\"packets\":").append(e.getValue().packetCount);
-                    r.append("}");
+                int idx = 0;
+                for (Map.Entry<String, SwitchStats> e : module.switchStats.entrySet()) {
+                    if (idx++ > 0) r.append(",");
+                    r.append("{\"dpid\":\"").append(module.esc(e.getKey())).append("\",");
+                    r.append("\"packets\":").append(e.getValue().packetCount).append("}");
                 }
-                r.append("]");
-                r.append("}");
+                r.append("]}");
 
-                log.info("[PACKETIN-API] Stats requested");
                 return r.toString();
+
             } catch (Exception e) {
-                return "{\"error\":\"" + esc(e.getMessage()) + "\"}";
+                return "{\"error\":\"" + e.getMessage() + "\"}";
             }
         }
     }
+
 
     // ===== RESOURCE 2: GET /wm/packetin/protocol/{proto} =====
-    public class ProtocolAnalysisResource extends ServerResource {
+    public static class ProtocolAnalysisResource extends ServerResource {
         @Get("json")
         public String retrieve() {
             try {
+                PacketInRestAPI module = instance;
+
                 String proto = (String) getRequestAttributes().get("proto");
-                PacketInStats stats = globalStats.get(proto);
-                if (stats == null) stats = new PacketInStats();
+                PacketInStats stats = module.globalStats.get(proto);
+
+                if (stats == null) {
+                    stats = module.new PacketInStats();
+                }
 
                 StringBuilder r = new StringBuilder();
-                r.append("{");
-                r.append("\"protocol\":\"").append(esc(proto)).append("\",");
+                r.append("{\"protocol\":\"").append(module.esc(proto)).append("\",");
                 r.append("\"packet_count\":").append(stats.count).append(",");
                 r.append("\"byte_count\":").append(stats.bytes).append(",");
-                r.append("\"average_size\":").append(stats.count > 0 ? stats.bytes / stats.count : 0);
-                r.append("}");
+                r.append("\"average_size\":").append(stats.count > 0 ? stats.bytes / stats.count : 0).append("}");
 
-                log.info("[PACKETIN-API] Protocol analysis: {}", proto);
                 return r.toString();
+
             } catch (Exception e) {
-                return "{\"error\":\"" + esc(e.getMessage()) + "\"}";
+                return "{\"error\":\"" + e.getMessage() + "\"}";
             }
         }
     }
+
 
     // ===== RESOURCE 3: GET /wm/packetin/switch/{dpid} =====
-    public class SwitchAnalysisResource extends ServerResource {
+    public static class SwitchAnalysisResource extends ServerResource {
         @Get("json")
         public String retrieve() {
             try {
+                PacketInRestAPI module = instance;
+
                 String dpid = (String) getRequestAttributes().get("dpid");
-                SwitchStats stats = switchStats.get(dpid);
-                if (stats == null) stats = new SwitchStats();
+                SwitchStats stats = module.switchStats.get(dpid);
+                if (stats == null) {
+                    stats = module.new SwitchStats();
+                }
 
                 StringBuilder r = new StringBuilder();
-                r.append("{");
-                r.append("\"dpid\":\"").append(esc(dpid)).append("\",");
+                r.append("{\"dpid\":\"").append(module.esc(dpid)).append("\",");
                 r.append("\"packet_count\":").append(stats.packetCount).append(",");
                 r.append("\"port_count\":").append(stats.ports.size()).append(",");
-                r.append("\"uptime\":").append(System.currentTimeMillis() - stats.startTime);
-                r.append("}");
+                r.append("\"uptime\":").append(System.currentTimeMillis() - stats.startTime).append("}");
 
-                log.info("[PACKETIN-API] Switch analysis: {}", dpid);
                 return r.toString();
+
             } catch (Exception e) {
-                return "{\"error\":\"" + esc(e.getMessage()) + "\"}";
+                return "{\"error\":\"" + e.getMessage() + "\"}";
             }
         }
     }
+
 
     // ===== RESOURCE 4: GET /wm/packetin/flows =====
-    public class FlowsResource extends ServerResource {
+    public static class FlowsResource extends ServerResource {
         @Get("json")
         public String retrieve() {
             try {
-                Map<String, FlowRecord> flows = getActiveFlows();
-                StringBuilder r = new StringBuilder();
-                r.append("{");
-                r.append("\"total_flows\":").append(flows.size()).append(",");
-                r.append("\"flows\":[]");
-                r.append("}");
+                PacketInRestAPI module = instance;
 
-                log.info("[PACKETIN-API] Flows requested");
-                return r.toString();
+                Map<String, FlowRecord> flows = module.getActiveFlows();
+
+                return "{\"total_flows\":" + flows.size() + ", \"flows\":[]}";
+
             } catch (Exception e) {
-                return "{\"error\":\"" + esc(e.getMessage()) + "\"}";
+                return "{\"error\":\"" + e.getMessage() + "\"}";
             }
         }
     }
 
+
     // ===== RESOURCE 5: GET /wm/packetin/anomalies =====
-    public class AnomaliesResource extends ServerResource {
+    public static class AnomaliesResource extends ServerResource {
         @Get("json")
         public String retrieve() {
             try {
+                PacketInRestAPI module = instance;
+
                 int critical = 0, warning = 0;
-                for (AnomalyAlert a : anomalyAlerts.values()) {
+                for (AnomalyAlert a : module.anomalyAlerts.values()) {
                     if (a.severity > 80) critical++;
                     else if (a.severity > 40) warning++;
                 }
 
-                StringBuilder r = new StringBuilder();
-                r.append("{");
-                r.append("\"total_anomalies\":").append(anomalyAlerts.size()).append(",");
-                r.append("\"critical_count\":").append(critical).append(",");
-                r.append("\"warning_count\":").append(warning).append(",");
-                r.append("\"anomalies\":[]");
-                r.append("}");
+                return "{\"total_anomalies\":" + module.anomalyAlerts.size()
+                        + ",\"critical_count\":" + critical
+                        + ",\"warning_count\":" + warning
+                        + ",\"anomalies\":[]}";
 
-                log.info("[PACKETIN-API] Anomalies requested");
-                return r.toString();
             } catch (Exception e) {
-                return "{\"error\":\"" + esc(e.getMessage()) + "\"}";
+                return "{\"error\":\"" + e.getMessage() + "\"}";
             }
         }
     }
 
+
     // ===== RESOURCE 6: POST /wm/packetin/reset =====
-    public class ResetResource extends ServerResource {
+    public static class ResetResource extends ServerResource {
         @Post("json")
         public String reset(Representation entity) {
             try {
-                globalStats.clear();
-                switchStats.clear();
-                anomalyAlerts.clear();
-                startTime = System.currentTimeMillis();
+                PacketInRestAPI module = instance;
 
-                log.info("[PACKETIN-API] Stats reset");
+                module.globalStats.clear();
+                module.switchStats.clear();
+                module.anomalyAlerts.clear();
+                module.startTime = System.currentTimeMillis();
+
                 return "{\"status\":\"reset_successful\",\"timestamp\":" + System.currentTimeMillis() + "}";
+
             } catch (Exception e) {
-                return "{\"error\":\"" + esc(e.getMessage()) + "\"}";
+                return "{\"error\":\"" + e.getMessage() + "\"}";
             }
         }
     }
 
+
     // ===== RESOURCE 7: GET /wm/packetin/test =====
-    public class TestPacketInResource extends ServerResource {
+    public static class TestPacketInResource extends ServerResource {
         @Get("json")
         public String test() {
             try {
+                PacketInRestAPI module = instance;
+
                 long total = 0;
-                for (PacketInStats s : globalStats.values()) {
+                for (PacketInStats s : module.globalStats.values()) {
                     total += s.count;
                 }
 
-                StringBuilder r = new StringBuilder();
-                r.append("{");
-                r.append("\"status\":\"online\",");
-                r.append("\"module\":\"PacketInRestAPI\",");
-                r.append("\"version\":\"1.0\",");
-                r.append("\"total_packets\":").append(total).append(",");
-                r.append("\"switches\":").append(switchStats.size()).append(",");
-                r.append("\"anomalies\":").append(anomalyAlerts.size());
-                r.append("}");
+                return "{\"status\":\"online\",\"module\":\"PacketInRestAPI\",\"version\":\"1.0\","
+                        + "\"total_packets\":" + total + ","
+                        + "\"switches\":" + module.switchStats.size() + ","
+                        + "\"anomalies\":" + module.anomalyAlerts.size() + "}";
 
-                log.info("[PACKETIN-API] Test successful");
-                return r.toString();
             } catch (Exception e) {
-                return "{\"error\":\"" + esc(e.getMessage()) + "\"}";
+                return "{\"error\":\"" + e.getMessage() + "\"}";
             }
         }
     }
 
-    // ===== INNER CLASSES =====
+
+
+    /* ============================================================
+     * INNER MODEL CLASSES
+     * ============================================================ */
+
     public class PacketInStats {
         public long count = 0;
         public long bytes = 0;
@@ -331,19 +345,22 @@ public class PacketInRestAPI implements IFloodlightModule, RestletRoutable {
         }
     }
 
-    private Map<String, FlowRecord> getActiveFlows() {
+
+    protected Map<String, FlowRecord> getActiveFlows() {
         return new ConcurrentHashMap<String, FlowRecord>();
     }
 
-    // ===== IFloodlightModule =====
+    @Override
     public Collection<Class<? extends IFloodlightService>> getModuleServices() {
         return Collections.emptyList();
     }
 
+    @Override
     public Map<Class<? extends IFloodlightService>, IFloodlightService> getServiceImpls() {
         return Collections.emptyMap();
     }
 
+    @Override
     public Collection<Class<? extends IFloodlightService>> getModuleDependencies() {
         Collection<Class<? extends IFloodlightService>> l = new ArrayList<Class<? extends IFloodlightService>>();
         l.add(IRestApiService.class);
