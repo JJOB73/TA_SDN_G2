@@ -346,25 +346,103 @@ def create_sw4_flows(switch_dpid: str, client_mac: str) -> List[Dict]:
     return flows
 
 
-def create_table_miss_flow(switch_dpid: str, switch_name: str) -> Dict:
+def create_sw1_sw4_goto_table_flows(switch_dpid: str, switch_name: str, host_ips: List[str]) -> List[Dict]:
     """
-    Crea un flujo de tabla miss que redirige a la tabla 1 cuando no hay match
+    Crea flujos para SW1 y SW4 que redirigen tráfico IP de/hacia hosts a tabla 1
     
     Args:
         switch_dpid: DPID del switch
-        switch_name: Nombre del switch (sw1, sw3, sw4) para el nombre del flujo
+        switch_name: Nombre del switch (sw1 o sw4)
+        host_ips: Lista de IPs de los hosts
         
     Returns:
-        Diccionario con la definición del flujo de tabla miss
+        Lista de diccionarios con las definiciones de flujos
     """
-    return {
-        "switch": switch_dpid,
-        "name": f"{switch_name}_table_miss_to_table1",
-        "table": "0",
-        "priority": "0",  # Prioridad más baja para que sea el último en evaluarse
-        "active": "true",
-        "instruction_goto_table": "1"  # Formato directo para Floodlight
+    flows = []
+    for host_ip in host_ips:
+        ip_normalized = host_ip.replace('.', '_')
+        
+        # Flujo 1: tráfico con IP origen del host → goto_table:1
+        flows.append({
+            "switch": switch_dpid,
+            "name": f"{switch_name}_goto_table1_src_{ip_normalized}",
+            "table": "0",
+            "priority": "200",
+            "active": "true",
+            "eth_type": "0x0800",
+            "ether_type": "0x800",
+            "ipv4_src": host_ip,
+            "instruction_goto_table": "1"
+        })
+        
+        # Flujo 2: tráfico con IP destino del host → goto_table:1
+        flows.append({
+            "switch": switch_dpid,
+            "name": f"{switch_name}_goto_table1_dst_{ip_normalized}",
+            "table": "0",
+            "priority": "200",
+            "active": "true",
+            "eth_type": "0x0800",
+            "ether_type": "0x800",
+            "ipv4_dst": host_ip,
+            "instruction_goto_table": "1"
+        })
+    
+    return flows
+
+
+def create_sw3_goto_table_flows(switch_dpid: str, host_config: Dict[str, Dict]) -> List[Dict]:
+    """
+    Crea flujos para SW3 que redirigen tráfico IP de/hacia hosts a tabla 1
+    El flujo de origen también matchea el puerto de entrada
+    
+    Args:
+        switch_dpid: DPID del switch SW3
+        host_config: Diccionario con MAC como clave y {"port": "X", "ip": "Y.Y.Y.Y"} como valor
+        
+    Returns:
+        Lista de diccionarios con las definiciones de flujos
+    """
+    flows = []
+    
+    # Mapeo de IPs a puertos (estático)
+    ip_to_port = {
+        "192.168.200.4": "4",
+        "192.168.200.2": "5",
+        "192.168.200.3": "6"
     }
+    
+    for host_ip, host_port in ip_to_port.items():
+        ip_normalized = host_ip.replace('.', '_')
+        
+        # Flujo 1: tráfico con IP origen del host desde su puerto → goto_table:1
+        flows.append({
+            "switch": switch_dpid,
+            "name": f"sw3_goto_table1_src_{ip_normalized}_port_{host_port}",
+            "table": "0",
+            "priority": "200",
+            "active": "true",
+            "in_port": host_port,
+            "eth_type": "0x0800",
+            "ether_type": "0x800",
+            "ipv4_src": host_ip,
+            "instruction_goto_table": "1"
+        })
+        
+        # Flujo 2: tráfico con IP destino del host → goto_table:1
+        flows.append({
+            "switch": switch_dpid,
+            "name": f"sw3_goto_table1_dst_{ip_normalized}",
+            "table": "0",
+            "priority": "200",
+            "active": "true",
+            "eth_type": "0x0800",
+            "ether_type": "0x800",
+            "ipv4_dst": host_ip,
+            "instruction_goto_table": "1"
+        })
+    
+    return flows
 
 
 def main():
@@ -476,10 +554,13 @@ def main():
     
     # MAC addresses de los clientes DHCP y sus puertos en SW3
     client_config = {
-        "fa:16:3e:1f:a1:d4": {"port": "4", "name": "h1"},
-        "fa:16:3e:4b:7d:ea": {"port": "5", "name": "h2"},
-        "fa:16:3e:50:27:7a": {"port": "6", "name": "h3"}
+        "fa:16:3e:1f:a1:d4": {"port": "4", "name": "h1", "ip": "192.168.200.4"},
+        "fa:16:3e:4b:7d:ea": {"port": "5", "name": "h2", "ip": "192.168.200.2"},
+        "fa:16:3e:50:27:7a": {"port": "6", "name": "h3", "ip": "192.168.200.3"}
     }
+    
+    # IPs de los hosts para los flujos goto_table
+    host_ips = ["192.168.200.4", "192.168.200.2", "192.168.200.3"]
     
     print("\n[3] Configurando flujos DHCP para clientes:")
     for mac, config in client_config.items():
@@ -528,35 +609,41 @@ def main():
             else:
                 print(f"  ✗ {flow['name']} - ERROR")
     
-    # Instalar flujos de tabla miss para cada switch
-    print("\n[8] Instalando flujos de tabla miss (redirigir a tabla 1)...")
+    # Instalar flujos goto_table para redirigir tráfico IP de/hacia hosts a tabla 1
+    print("\n[8] Instalando flujos goto_table (redirigir tráfico IP de/hacia hosts a tabla 1)...")
     
-    # Tabla miss para SW3
-    table_miss_sw3 = create_table_miss_flow(sw3_dpid, "sw3")
-    total_flows += 1
-    if controller.add_flow(table_miss_sw3):
-        print(f"  ✓ {table_miss_sw3['name']}")
-        success_flows += 1
-    else:
-        print(f"  ✗ {table_miss_sw3['name']} - ERROR")
+    # Flujos para SW3 (incluye in_port en el flujo de origen)
+    print("  Instalando flujos en SW3...")
+    sw3_goto_flows = create_sw3_goto_table_flows(sw3_dpid, client_config)
+    for flow in sw3_goto_flows:
+        total_flows += 1
+        if controller.add_flow(flow):
+            print(f"    ✓ {flow['name']}")
+            success_flows += 1
+        else:
+            print(f"    ✗ {flow['name']} - ERROR")
     
-    # Tabla miss para SW1
-    table_miss_sw1 = create_table_miss_flow(sw1_dpid, "sw1")
-    total_flows += 1
-    if controller.add_flow(table_miss_sw1):
-        print(f"  ✓ {table_miss_sw1['name']}")
-        success_flows += 1
-    else:
-        print(f"  ✗ {table_miss_sw1['name']} - ERROR")
+    # Flujos para SW1
+    print("  Instalando flujos en SW1...")
+    sw1_goto_flows = create_sw1_sw4_goto_table_flows(sw1_dpid, "sw1", host_ips)
+    for flow in sw1_goto_flows:
+        total_flows += 1
+        if controller.add_flow(flow):
+            print(f"    ✓ {flow['name']}")
+            success_flows += 1
+        else:
+            print(f"    ✗ {flow['name']} - ERROR")
     
-    # Tabla miss para SW4
-    table_miss_sw4 = create_table_miss_flow(sw4_dpid, "sw4")
-    total_flows += 1
-    if controller.add_flow(table_miss_sw4):
-        print(f"  ✓ {table_miss_sw4['name']}")
-        success_flows += 1
-    else:
-        print(f"  ✗ {table_miss_sw4['name']} - ERROR")
+    # Flujos para SW4
+    print("  Instalando flujos en SW4...")
+    sw4_goto_flows = create_sw1_sw4_goto_table_flows(sw4_dpid, "sw4", host_ips)
+    for flow in sw4_goto_flows:
+        total_flows += 1
+        if controller.add_flow(flow):
+            print(f"    ✓ {flow['name']}")
+            success_flows += 1
+        else:
+            print(f"    ✗ {flow['name']} - ERROR")
     
     # Verificar que los flujos estén realmente instalados en Floodlight
     print("\n[9] Verificando flujos instalados en Floodlight...")
@@ -571,9 +658,11 @@ def main():
     sw1_count = len(sw1_flows.get(sw1_dpid, [])) if isinstance(sw1_flows.get(sw1_dpid), list) else 0
     sw4_count = len(sw4_flows.get(sw4_dpid, [])) if isinstance(sw4_flows.get(sw4_dpid), list) else 0
     
-    print(f"  SW3: {sw3_count} flujos en Floodlight (esperados: {len(client_config) * 2 + 1})")
-    print(f"  SW1: {sw1_count} flujos en Floodlight (esperados: {len(client_config) * 2 + 1})")
-    print(f"  SW4: {sw4_count} flujos en Floodlight (esperados: {len(client_config) * 2 + 1})")
+    # Flujos esperados: 6 DHCP (3 clientes × 2) + 6 goto_table (3 hosts × 2) = 12 por switch
+    expected_flows_per_switch = len(client_config) * 2 + len(host_ips) * 2
+    print(f"  SW3: {sw3_count} flujos en Floodlight (esperados: {expected_flows_per_switch})")
+    print(f"  SW1: {sw1_count} flujos en Floodlight (esperados: {expected_flows_per_switch})")
+    print(f"  SW4: {sw4_count} flujos en Floodlight (esperados: {expected_flows_per_switch})")
     
     # Mostrar algunos nombres de flujos para verificar y mostrar estructura de un flujo DHCP
     if sw3_flows.get(sw3_dpid):
@@ -625,13 +714,13 @@ def main():
     for mac, config in client_config.items():
         print(f"  - {config['name']}: {mac} en SW3 puerto {config['port']}")
     
-    if success_flows == total_flows and sw3_count >= len(client_config) * 2 + 1:
+    if success_flows == total_flows and sw3_count >= expected_flows_per_switch:
         print("\n✓ Todos los flujos se instalaron correctamente!")
         return 0
     else:
         print(f"\n⚠ {total_flows - success_flows} flujos no se pudieron instalar. Revisa los errores arriba.")
-        if sw3_count < len(client_config) * 2 + 1:
-            print(f"⚠ ADVERTENCIA: Solo {sw3_count} flujos están en Floodlight para SW3, se esperaban {len(client_config) * 2 + 1}")
+        if sw3_count < expected_flows_per_switch:
+            print(f"⚠ ADVERTENCIA: Solo {sw3_count} flujos están en Floodlight para SW3, se esperaban {expected_flows_per_switch}")
         return 1
 
 
